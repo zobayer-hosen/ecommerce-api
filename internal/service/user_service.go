@@ -72,9 +72,9 @@ func (s *userService) ChangePassword(ctx context.Context, userID int64, req dto.
 	user, err := s.userRepo.FindByID(ctx, userID)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, apperror.ErrUserNotFound
+			return apperror.ErrUserNotFound
 		}
-		return nil, apperror.ErrInternal
+		return apperror.ErrInternal
 	}
 
 	if !hash.CheckPassword(req.CurrentPassword, user.PasswordHash) {
