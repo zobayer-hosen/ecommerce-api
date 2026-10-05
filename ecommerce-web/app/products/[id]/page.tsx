@@ -15,7 +15,6 @@ import { Alert } from "@/components/ui/Alert";
 import { Skeleton } from "@/components/ui/Skeleton";
 import {
   ShoppingCart,
-  Check,
   ShieldCheck,
   Truck,
   ArrowLeft,

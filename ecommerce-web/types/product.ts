@@ -1,5 +1,7 @@
 import { Category } from "./category";
 
+export type ProductStatus = "DRAFT" | "ACTIVE" | "ARCHIVED";
+
 export interface Product {
   id: number;
   category_id: number;
@@ -11,7 +13,7 @@ export interface Product {
   currency: string;
   stock_quantity: number;
   image_url?: string;
-  status: "DRAFT" | "ACTIVE" | "ARCHIVED";
+  status: ProductStatus;
   created_at: string;
   category?: Category;
 }
