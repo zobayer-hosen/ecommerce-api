@@ -14,6 +14,7 @@ import { PRODUCT_STATUS_COLORS } from "@/lib/constants";
 import { getErrorMessage } from "@/services/api.client";
 import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
+import { Textarea } from "@/components/ui/Textarea";
 import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
 import { Alert } from "@/components/ui/Alert";
@@ -24,16 +25,44 @@ import {
   Edit2,
   Trash2,
   Package,
+  PackagePlus,
+  Sparkles,
+  DollarSign,
+  Image as ImageIcon,
+  AlertCircle,
+  FolderPlus,
 } from "lucide-react";
 
 const productSchema = z.object({
-  category_id: z.coerce.number().positive("Please select a valid category"),
-  name: z.string().min(2, "Product name must be at least 2 characters").max(200),
-  sku: z.string().min(2, "SKU must be at least 2 characters").max(64),
-  price: z.coerce.number().positive("Price must be greater than 0"),
-  stock_quantity: z.coerce.number().min(0, "Stock quantity cannot be negative"),
-  description: z.string().max(5000).optional().or(z.literal("")),
-  image_url: z.string().url("Must be a valid URL").optional().or(z.literal("")),
+  category_id: z.coerce
+    .number({ invalid_type_error: "Please select a category" })
+    .positive("Please select a valid category"),
+  name: z
+    .string()
+    .trim()
+    .min(2, "Product name must be at least 2 characters")
+    .max(200, "Product name cannot exceed 200 characters"),
+  sku: z
+    .string()
+    .trim()
+    .min(2, "SKU must be at least 2 characters")
+    .max(64, "SKU cannot exceed 64 characters"),
+  price: z.coerce
+    .number({ invalid_type_error: "Please enter a valid price" })
+    .positive("Price must be greater than 0"),
+  stock_quantity: z.coerce
+    .number({ invalid_type_error: "Please enter stock quantity" })
+    .min(0, "Stock quantity cannot be negative"),
+  description: z.string().max(5000, "Description cannot exceed 5000 characters").optional().or(z.literal("")),
+  image_url: z
+    .string()
+    .trim()
+    .optional()
+    .refine(
+      (val) => !val || /^https?:\/\/.+/.test(val),
+      "Must be a valid URL starting with http:// or https://"
+    )
+    .or(z.literal("")),
   status: z.enum(["DRAFT", "ACTIVE", "ARCHIVED"]),
 });
 
@@ -46,6 +75,13 @@ export default function AdminProductsPage() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+
+  // Quick Category Modal State
+  const [isQuickCategoryOpen, setIsQuickCategoryOpen] = useState(false);
+  const [quickCategoryName, setQuickCategoryName] = useState("");
+  const [quickCategoryDesc, setQuickCategoryDesc] = useState("");
+  const [quickCategoryLoading, setQuickCategoryLoading] = useState(false);
+  const [quickCategoryError, setQuickCategoryError] = useState<string | null>(null);
 
   // Fetch categories
   const { data: categories = [] } = useQuery({
@@ -73,6 +109,8 @@ export default function AdminProductsPage() {
     register,
     handleSubmit,
     reset,
+    watch,
+    setValue,
     formState: { errors, isSubmitting },
   } = useForm<ProductFormValues>({
     resolver: zodResolver(productSchema),
@@ -82,13 +120,17 @@ export default function AdminProductsPage() {
     },
   });
 
+  const watchedImageUrl = watch("image_url");
+  const watchedDescription = watch("description") || "";
+  const watchedName = watch("name");
+
   const openCreateModal = () => {
     setEditingProduct(null);
     reset({
       name: "",
       sku: "",
-      category_id: categories[0]?.id || 0,
-      price: 0,
+      category_id: categories.length > 0 ? categories[0].id : ("" as unknown as number),
+      price: "" as unknown as number,
       stock_quantity: 0,
       description: "",
       image_url: "",
@@ -114,13 +156,27 @@ export default function AdminProductsPage() {
     setIsModalOpen(true);
   };
 
+  // Auto-generate SKU helper
+  const generateSku = () => {
+    const basePrefix = watchedName
+      ? watchedName
+          .trim()
+          .toUpperCase()
+          .replace(/[^A-Z0-9]+/g, "-")
+          .slice(0, 6)
+          .replace(/-+$/, "")
+      : "PRD";
+    const randomSuffix = Math.random().toString(36).substring(2, 6).toUpperCase();
+    setValue("sku", `${basePrefix || "PRD"}-${randomSuffix}`, { shouldValidate: true });
+  };
+
   const createMutation = useMutation({
     mutationFn: (values: ProductFormValues) =>
       adminService.createProduct({
         ...values,
         price: Math.round(values.price * 100), // Minor units
-        description: values.description || undefined,
-        image_url: values.image_url || undefined,
+        description: values.description?.trim() ? values.description.trim() : undefined,
+        image_url: values.image_url?.trim() ? values.image_url.trim() : undefined,
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["admin-products"] });
@@ -134,8 +190,8 @@ export default function AdminProductsPage() {
       adminService.updateProduct(editingProduct!.id, {
         ...values,
         price: Math.round(values.price * 100),
-        description: values.description || undefined,
-        image_url: values.image_url || undefined,
+        description: values.description?.trim() ? values.description.trim() : undefined,
+        image_url: values.image_url?.trim() ? values.image_url.trim() : undefined,
       }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["admin-products"] });
@@ -167,12 +223,35 @@ export default function AdminProductsPage() {
     }
   };
 
+  // Handle Quick Category Create
+  const handleQuickCategorySubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!quickCategoryName.trim()) return;
+    setQuickCategoryLoading(true);
+    setQuickCategoryError(null);
+    try {
+      const created = await adminService.createCategory({
+        name: quickCategoryName.trim(),
+        description: quickCategoryDesc.trim() || undefined,
+      });
+      await queryClient.invalidateQueries({ queryKey: ["categories"] });
+      setValue("category_id", created.id, { shouldValidate: true });
+      setQuickCategoryName("");
+      setQuickCategoryDesc("");
+      setIsQuickCategoryOpen(false);
+    } catch (err) {
+      setQuickCategoryError(getErrorMessage(err));
+    } finally {
+      setQuickCategoryLoading(false);
+    }
+  };
+
   const products = productsResponse?.data || [];
   const categoryOptions = categories.map((c) => ({ value: c.id, label: c.name }));
   const statusOptions = [
-    { value: "DRAFT", label: "Draft" },
-    { value: "ACTIVE", label: "Active" },
-    { value: "ARCHIVED", label: "Archived" },
+    { value: "ACTIVE", label: "Active (Visible in Store)" },
+    { value: "DRAFT", label: "Draft (Hidden from Catalog)" },
+    { value: "ARCHIVED", label: "Archived (Discontinued)" },
   ];
 
   return (
@@ -180,8 +259,12 @@ export default function AdminProductsPage() {
       {/* Page Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight">Product Management</h1>
-          <p className="text-sm text-slate-500 mt-1">Create, update catalog inventory and adjust product states</p>
+          <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-900 tracking-tight">
+            Product Management
+          </h1>
+          <p className="text-sm text-slate-500 mt-1">
+            Create, update catalog inventory and adjust product states
+          </p>
         </div>
 
         <Button onClick={openCreateModal} className="gap-2 shrink-0">
@@ -344,111 +427,296 @@ export default function AdminProductsPage() {
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
         title={editingProduct ? "Edit Product" : "Create New Product"}
-        description={editingProduct ? `Updating SKU: ${editingProduct.sku}` : "Fill in the product details"}
-        maxWidth="lg"
+        description={
+          editingProduct
+            ? `Updating SKU: ${editingProduct.sku}`
+            : "Fill in the product details below to add it to your store catalog"
+        }
+        maxWidth="2xl"
       >
-        <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
+        <form onSubmit={handleSubmit(onSubmit)} className="space-y-6">
           {actionError && (
             <Alert variant="error" onClose={() => setActionError(null)}>
               {actionError}
             </Alert>
           )}
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div className="sm:col-span-2">
-              <Input
-                label="Product Name"
-                placeholder="e.g. Wireless Noise-Cancelling Headphones"
-                required
-                {...register("name")}
-                error={errors.name?.message}
-              />
+          {/* Alert if no categories exist */}
+          {categories.length === 0 && (
+            <div className="bg-amber-50 border border-amber-200 rounded-xl p-3.5 text-sm text-amber-900 flex items-start gap-3">
+              <AlertCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+              <div className="flex-1">
+                <p className="font-semibold text-amber-800">No categories found in store</p>
+                <p className="text-xs text-amber-700 mt-0.5">
+                  Every product must belong to a category. Create a category right now before proceeding.
+                </p>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="mt-2 text-xs bg-white border-amber-300 text-amber-900 hover:bg-amber-100"
+                  onClick={() => setIsQuickCategoryOpen(true)}
+                >
+                  <Plus className="w-3.5 h-3.5 mr-1" />
+                  <span>Create Quick Category</span>
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {/* Section 1: General Information */}
+          <div className="space-y-4">
+            <div className="flex items-center gap-2 pb-2 border-b border-slate-100">
+              <PackagePlus className="w-4 h-4 text-indigo-600" />
+              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700">
+                General Information
+              </h4>
             </div>
 
-            <div>
-              <Input
-                label="SKU (Unique)"
-                placeholder="e.g. AUD-WNC-001"
-                required
-                {...register("sku")}
-                error={errors.sku?.message}
-              />
-            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="sm:col-span-2">
+                <Input
+                  label="Product Name"
+                  placeholder="e.g. Wireless Noise-Cancelling Headphones"
+                  required
+                  {...register("name")}
+                  error={errors.name?.message}
+                />
+              </div>
 
-            <div>
-              <Select
-                label="Category"
-                required
-                options={categoryOptions}
-                {...register("category_id")}
-                error={errors.category_id?.message}
-              />
-            </div>
+              <div>
+                <Select
+                  label="Category"
+                  required
+                  placeholder="Select a category..."
+                  options={categoryOptions}
+                  rightAction={
+                    <button
+                      type="button"
+                      onClick={() => setIsQuickCategoryOpen(true)}
+                      className="text-xs text-indigo-600 hover:text-indigo-800 font-semibold flex items-center gap-1 transition-colors"
+                    >
+                      <Plus className="w-3 h-3" />
+                      <span>New Category</span>
+                    </button>
+                  }
+                  {...register("category_id")}
+                  error={errors.category_id?.message}
+                  helperText={
+                    categoryOptions.length === 0
+                      ? "Create a category first to select"
+                      : undefined
+                  }
+                />
+              </div>
 
-            <div>
-              <Input
-                label="Price (BDT)"
-                type="number"
-                step="0.01"
-                min="0.01"
-                placeholder="e.g. 1200.00"
-                required
-                {...register("price")}
-                error={errors.price?.message}
-              />
-            </div>
-
-            <div>
-              <Input
-                label="Initial Stock Quantity"
-                type="number"
-                min="0"
-                placeholder="0"
-                required
-                {...register("stock_quantity")}
-                error={errors.stock_quantity?.message}
-              />
-            </div>
-
-            <div>
-              <Select
-                label="Status"
-                options={statusOptions}
-                required
-                {...register("status")}
-                error={errors.status?.message}
-              />
-            </div>
-
-            <div>
-              <Input
-                label="Image URL"
-                placeholder="https://images.unsplash.com/..."
-                {...register("image_url")}
-                error={errors.image_url?.message}
-              />
-            </div>
-
-            <div className="sm:col-span-2">
-              <label className="block text-sm font-medium text-slate-700 mb-1.5">Description</label>
-              <textarea
-                rows={3}
-                className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                placeholder="Product description and specifications..."
-                {...register("description")}
-              />
-              {errors.description && (
-                <p className="mt-1 text-xs text-rose-600">{errors.description.message}</p>
-              )}
+              <div>
+                <Input
+                  label="SKU (Unique Code)"
+                  placeholder="e.g. AUD-WNC-001"
+                  required
+                  rightAction={
+                    <button
+                      type="button"
+                      onClick={generateSku}
+                      className="text-xs text-indigo-600 hover:text-indigo-800 font-semibold flex items-center gap-1 transition-colors"
+                      title="Auto-generate SKU"
+                    >
+                      <Sparkles className="w-3 h-3 text-indigo-500" />
+                      <span>Auto Generate</span>
+                    </button>
+                  }
+                  {...register("sku")}
+                  error={errors.sku?.message}
+                />
+              </div>
             </div>
           </div>
 
-          <div className="flex justify-end gap-2.5 pt-4 border-t border-slate-100">
-            <Button type="button" variant="outline" onClick={() => setIsModalOpen(false)}>
+          {/* Section 2: Pricing & Inventory */}
+          <div className="space-y-4">
+            <div className="flex items-center gap-2 pb-2 border-b border-slate-100">
+              <DollarSign className="w-4 h-4 text-emerald-600" />
+              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700">
+                Pricing & Inventory
+              </h4>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div>
+                <Input
+                  label="Price"
+                  prefixText="BDT"
+                  type="number"
+                  step="0.01"
+                  min="0.01"
+                  placeholder="1200.00"
+                  required
+                  {...register("price")}
+                  error={errors.price?.message}
+                />
+              </div>
+
+              <div>
+                <Input
+                  label="Initial Stock"
+                  type="number"
+                  min="0"
+                  placeholder="0"
+                  required
+                  {...register("stock_quantity")}
+                  error={errors.stock_quantity?.message}
+                  helperText="Units available for sale"
+                />
+              </div>
+
+              <div>
+                <Select
+                  label="Status"
+                  options={statusOptions}
+                  required
+                  {...register("status")}
+                  error={errors.status?.message}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Section 3: Media & Details */}
+          <div className="space-y-4">
+            <div className="flex items-center gap-2 pb-2 border-b border-slate-100">
+              <ImageIcon className="w-4 h-4 text-violet-600" />
+              <h4 className="text-xs font-bold uppercase tracking-wider text-slate-700">
+                Media & Details
+              </h4>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <Input
+                  label="Image URL (Optional)"
+                  placeholder="https://images.unsplash.com/..."
+                  helperText="Direct URL to product image (JPG, PNG, WebP)"
+                  {...register("image_url")}
+                  error={errors.image_url?.message}
+                />
+
+                {/* Live Image Preview */}
+                {watchedImageUrl && watchedImageUrl.trim() !== "" && (
+                  <div className="mt-2.5 flex items-center gap-3 p-2.5 bg-slate-50 border border-slate-200 rounded-lg">
+                    <div className="w-14 h-14 rounded-md bg-white border border-slate-200 overflow-hidden shrink-0 flex items-center justify-center">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        src={watchedImageUrl.trim()}
+                        alt="Product preview"
+                        className="w-full h-full object-cover"
+                        onError={(e) => {
+                          (e.target as HTMLElement).style.display = "none";
+                          const fallback = (e.target as HTMLElement).nextElementSibling;
+                          if (fallback) fallback.classList.remove("hidden");
+                        }}
+                      />
+                      <div className="hidden flex-col items-center justify-center text-rose-500 p-1 text-center">
+                        <AlertCircle className="w-4 h-4" />
+                        <span className="text-[9px] mt-0.5 leading-none">Load error</span>
+                      </div>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-semibold text-slate-800">Image Preview</p>
+                      <p className="text-xs text-slate-400 truncate mt-0.5 font-mono">
+                        {watchedImageUrl}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setValue("image_url", "")}
+                      className="text-xs text-slate-400 hover:text-rose-600 font-medium px-2 py-1 rounded transition-colors"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <Textarea
+                  label="Description (Optional)"
+                  rows={3}
+                  placeholder="Enter detailed product description, specifications, and warranty details..."
+                  charCount={watchedDescription.length}
+                  maxCharCount={5000}
+                  {...register("description")}
+                  error={errors.description?.message}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Action Footer */}
+          <div className="flex items-center justify-end gap-3 pt-4 border-t border-slate-100">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setIsModalOpen(false)}
+              disabled={isSubmitting}
+            >
               Cancel
             </Button>
             <Button type="submit" isLoading={isSubmitting}>
               {editingProduct ? "Save Changes" : "Create Product"}
+            </Button>
+          </div>
+        </form>
+      </Modal>
+
+      {/* Quick Category Modal */}
+      <Modal
+        isOpen={isQuickCategoryOpen}
+        onClose={() => setIsQuickCategoryOpen(false)}
+        title="Add New Category"
+        description="Quickly create a category to assign your product to"
+        maxWidth="md"
+      >
+        <form onSubmit={handleQuickCategorySubmit} className="space-y-4">
+          {quickCategoryError && (
+            <Alert variant="error" onClose={() => setQuickCategoryError(null)}>
+              {quickCategoryError}
+            </Alert>
+          )}
+
+          <Input
+            label="Category Name"
+            placeholder="e.g. Wireless Audio"
+            required
+            value={quickCategoryName}
+            onChange={(e) => setQuickCategoryName(e.target.value)}
+          />
+
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1.5">
+              Description (Optional)
+            </label>
+            <textarea
+              rows={2}
+              className="w-full rounded-lg border border-slate-300 px-3.5 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
+              placeholder="Short category summary..."
+              value={quickCategoryDesc}
+              onChange={(e) => setQuickCategoryDesc(e.target.value)}
+            />
+          </div>
+
+          <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-slate-100">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setIsQuickCategoryOpen(false)}
+              disabled={quickCategoryLoading}
+            >
+              Cancel
+            </Button>
+            <Button type="submit" isLoading={quickCategoryLoading}>
+              <FolderPlus className="w-4 h-4 mr-1.5" />
+              <span>Create & Assign</span>
             </Button>
           </div>
         </form>
