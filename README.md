@@ -9,7 +9,7 @@ A production-grade, full-stack E-Commerce system comprising a high-performance G
 ```
 ecommerce-platform/
 ├── ecommerce-api/            # Go RESTful API backend
-│   ├── cmd/server/           # Application entrypoint
+│   ├── cmd/api/              # Application entrypoint
 │   ├── internal/             # Domain logic, handlers, middleware, services, repositories
 │   ├── migrations/           # PostgreSQL SQL migrations
 │   └── pkg/                  # Shared utilities (JWT, password hashing, validator, errors)
@@ -44,7 +44,7 @@ ecommerce-platform/
    ```
 4. Build and start the server:
    ```bash
-   go run cmd/server/main.go
+   go run cmd/api/main.go
    ```
 The backend server runs on `http://localhost:8080` (API routes at `/api/v1`).
 
